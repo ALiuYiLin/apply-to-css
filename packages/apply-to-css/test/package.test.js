@@ -22,9 +22,11 @@ function resolveFromPackage(file) {
 }
 
 test('package manifest publishes the built dist artifacts', () => {
-  // The bin name matches the (scoped) package name; npm/pnpm strip the scope
-  // when creating the executable, so the installed command is `apply-to-css`.
-  assert.deepEqual(packageJson.bin, { [packageJson.name]: './dist/bin.js' })
+  // The installed executable is the unscoped command `apply-to-css`.
+  // `npx @10coding/apply-to-css` also works: single-bin packages are resolved
+  // by the package name, no need to name the bin after the scoped package.
+  const binName = packageJson.name.replace(/^@[^/]+\//, '')
+  assert.deepEqual(packageJson.bin, { [binName]: 'dist/bin.js' })
   assert.equal(packageJson.main, './dist/index.js')
   assert.equal(packageJson.types, './dist/index.d.ts')
   assert.deepEqual(packageJson.exports['.'], {

@@ -55,6 +55,7 @@
 ## 环境要求
 
 - Node.js >= 20
+- 仅提供 ESM 入口（`type: module`）：Node 20 下请通过 `import` / 打包器使用，CommonJS `require()` 不可用
 - Tailwind CSS v4（包内已声明 `tailwindcss` 依赖）
 - 组件内使用 `@reference`，或通过 `--css` 指定 Tailwind 入口
 - 仅处理 `lang` 为 `css` / `postcss`（或不写 `lang`）的 `<style>`；SCSS/Less 等会跳过并给出警告
@@ -68,20 +69,20 @@ pnpm build       # 清理 dist/ 后执行 tsc，输出 dist/*.js、dist/*.d.ts
 pnpm typecheck   # 只做类型检查，不产出文件
 ```
 
-`dist/` 不提交到仓库。首次安装依赖时包内的 `prepare` 脚本会自动构建（`dist/` 缺失或被清理后，
-执行 `pnpm build` 即可）；发布 npm 包时 `prepack` 也会先构建，保证发布产物里的 `dist/` 是最新的。
+`dist/` 不提交到仓库。首次安装依赖（或 `pnpm install --force`）时包内的 `prepare` 脚本会自动构建；
+`dist/` 被清理后执行 `pnpm build` 即可。打包 / 发布（`pnpm pack`、`pnpm publish`、`pnpm release`）
+前也会自动执行 `prepare` 构建，保证产物里的 `dist/` 是最新的。
 
 ## 使用
 
-在 workspace 根目录安装依赖（`prepare` 会自动把包构建到 `dist/`）：
+在 workspace 根目录安装依赖（首次安装时 `prepare` 会自动把包构建到 `dist/`）：
 
 ```bash
 pnpm install
 ```
 
-> 包的 `bin` 名与包名一致（`@10coding/apply-to-css`）。npm / pnpm 安装时会把 scoped 名称
-> 归一成可执行命令 `apply-to-css`，所以下面仍用 `apply-to-css`；也可以直接按包名运行
-> （`npx @10coding/apply-to-css`）。
+> 包提供的可执行命令是 `apply-to-css`（`bin` 指向构建后的 `dist/bin.js`）；也可以用
+> `npx @10coding/apply-to-css` 按包名运行（只有一个 bin 的包会自动命中）。
 
 然后通过根目录脚本运行（`--cwd` 指向目标 Vue 项目）：
 
@@ -103,7 +104,7 @@ node packages/apply-to-css/dist/bin.js --cwd ../your-vue-project --diff
 pnpm --filter @10coding/apply-to-css exec node dist/bin.js --help
 ```
 
-发布之后可以直接按包名运行（bin 名与包名一致，npx / pnpm dlx 会命中它）：
+发布之后可以直接按包名运行（npx / pnpm dlx 会自动命中这个唯一的 bin）：
 
 ```bash
 npx @10coding/apply-to-css --cwd ../your-vue-project --diff
