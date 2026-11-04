@@ -7,6 +7,11 @@
   "scripts": {
     "apply-to-css": "node packages/apply-to-css/bin/apply-to-css.js",
     "test": "pnpm --filter @10coding/apply-to-css test",
-    "test:watch": "pnpm --filter @10coding/apply-to-css test:watch"
+    "test:watch": "pnpm --filter @10coding/apply-to-css test:watch",
+    "playground": "pnpm --filter @10coding/apply-to-css-playground dev",
+    "playground:build": "pnpm --filter @10coding/apply-to-css-playground build",
+    "playground:check": "pnpm --filter @10coding/apply-to-css-playground demo:check",
+    "playground:diff": "pnpm --filter @10coding/apply-to-css-playground demo:diff",
+    "playground:convert": "pnpm --filter @10coding/apply-to-css-playground demo:convert"
   }
 }

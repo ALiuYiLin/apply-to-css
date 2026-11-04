@@ -125,6 +125,20 @@ apply-to-css --exclude "src/legacy/**" --write
 - `1`：转换出错，或 `--check` 发现仍有文件需要转换
 - `2`：命令行参数错误
 
+## Playground
+
+仓库里的 [`playground/`](playground) 是一个可直接运行的 Vite + Vue 3 + TypeScript + Tailwind CSS v4 示例项目，用来展示与试验 `@apply` / `@reference` 的转换：
+
+```bash
+pnpm playground          # 启动开发服务器
+pnpm playground:build    # vue-tsc + vite build
+pnpm playground:diff     # 预览需要转换的文件
+pnpm playground:check    # CI 检查（示例源码默认未转换，退出码为 1）
+pnpm playground:convert  # 写回 playground/src
+```
+
+示例组件覆盖普通工具类、`hover:` / `focus-visible:` / `disabled:` / `dark:`、`max-lg:`、`group-hover:`、`[&_tbody_tr]`、`:deep()` 等写法。详情见 [`playground/README.md`](playground/README.md)。
+
 ## 工作原理
 
 1. 读取每个 `.vue` 的 `<style>` 块，收集其中的 `@apply` 和 `@reference`。

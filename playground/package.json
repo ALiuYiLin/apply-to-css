@@ -1,0 +1,28 @@
+{
+  "name": "@10coding/apply-to-css-playground",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Vite + Vue 3 + TypeScript + Tailwind CSS playground for @10coding/apply-to-css",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --noEmit",
+    "demo:diff": "apply-to-css --cwd . --diff",
+    "demo:check": "apply-to-css --cwd . --check",
+    "demo:convert": "apply-to-css --cwd . --write"
+  },
+  "dependencies": {
+    "vue": "^3.5.44"
+  },
+  "devDependencies": {
+    "@10coding/apply-to-css": "workspace:*",
+    "@tailwindcss/vite": "^4.3.4",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "tailwindcss": "^4.3.4",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.7",
+    "vue-tsc": "^3.3.14"
+  }
+}

@@ -1,0 +1,169 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------------- */
+/* Design tokens                                                              */
+/* ------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+
+  --surface-0: #f4f5fa;
+  --surface-1: #ffffff;
+  --surface-2: #eef0f7;
+  --surface-3: #e3e7f1;
+
+  --ink-1: #151b27;
+  --ink-2: #4e596b;
+  --ink-3: #8792a6;
+
+  --line-1: #e2e6ef;
+  --line-2: #ccd4e2;
+
+  --brand-1: #6d5efc;
+  --brand-2: #a78bfa;
+  --brand-strong: #5847e6;
+  --brand-soft: #efedff;
+  --brand-ink: #4c3fd0;
+
+  --accent-1: #0d9488;
+  --accent-soft: #e1f7f2;
+
+  --warn-1: #d97706;
+  --warn-soft: #fdf2df;
+
+  --danger-1: #dc2626;
+  --danger-soft: #fdecec;
+
+  --ring: #7c6cff;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --surface-0: #090b12;
+  --surface-1: #11141d;
+  --surface-2: #171b27;
+  --surface-3: #1f2434;
+
+  --ink-1: #f1f4fb;
+  --ink-2: #a9b2c4;
+  --ink-3: #6f7a90;
+
+  --line-1: #232938;
+  --line-2: #303849;
+
+  --brand-1: #8b7cff;
+  --brand-2: #c4b5fd;
+  --brand-strong: #7362f2;
+  --brand-soft: #211f3d;
+  --brand-ink: #c9c1ff;
+
+  --accent-1: #2dd4bf;
+  --accent-soft: #0e2f2b;
+
+  --warn-1: #fbbf24;
+  --warn-soft: #33260c;
+
+  --danger-1: #f87171;
+  --danger-soft: #3a1719;
+
+  --ring: #a78bfa;
+}
+
+/*
+ * `inline` keeps utilities pointing at the runtime variables above, which is
+ * exactly the shape apply-to-css emits (`background-color: var(--surface-1)`).
+ * Both light and dark themes therefore keep working after conversion.
+ */
+@theme inline {
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  --color-ink-1: var(--ink-1);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+
+  --color-line-1: var(--line-1);
+  --color-line-2: var(--line-2);
+
+  --color-brand-1: var(--brand-1);
+  --color-brand-2: var(--brand-2);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-ink: var(--brand-ink);
+
+  --color-accent-1: var(--accent-1);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-warn-1: var(--warn-1);
+  --color-warn-soft: var(--warn-soft);
+
+  --color-danger-1: var(--danger-1);
+  --color-danger-soft: var(--danger-soft);
+
+  --color-ring: var(--ring);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    background-color: var(--surface-0);
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    background-color: var(--surface-0);
+    color: var(--ink-1);
+    font-family:
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      'Segoe UI',
+      'PingFang SC',
+      'Hiragino Sans GB',
+      'Microsoft YaHei',
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--brand-soft);
+    color: var(--brand-ink);
+  }
+
+  :focus-visible {
+    outline-color: var(--ring);
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :where(#features, #components, #compare, #usage) {
+    scroll-margin-top: 6.5rem;
+  }
+}
+
+@keyframes playground-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
