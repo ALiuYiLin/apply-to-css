@@ -1,0 +1,12 @@
+{
+  "name": "@10coding/apply-to-css-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "pnpm workspace for @10coding/apply-to-css",
+  "type": "module",
+  "scripts": {
+    "apply-to-css": "node packages/apply-to-css/bin/apply-to-css.js",
+    "test": "pnpm --filter @10coding/apply-to-css test",
+    "test:watch": "pnpm --filter @10coding/apply-to-css test:watch"
+  }
+}

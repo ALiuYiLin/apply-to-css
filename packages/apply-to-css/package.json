@@ -1,0 +1,30 @@
+{
+  "name": "@10coding/apply-to-css",
+  "version": "0.1.0",
+  "description": "Expand Tailwind CSS @apply rules in Vue SFC <style> blocks into plain CSS declarations.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "apply-to-css": "./bin/apply-to-css.js"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "test:watch": "node --test --watch"
+  },
+  "dependencies": {
+    "postcss": "^8.5.0",
+    "tailwindcss": "^4.1.16"
+  }
+}
