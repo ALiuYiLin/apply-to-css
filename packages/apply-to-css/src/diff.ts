@@ -2,11 +2,30 @@
 
 const MAX_CELLS = 4_000_000
 
+type DiffOperationType = 'equal' | 'delete' | 'insert'
+
+interface DiffOperation {
+  type: DiffOperationType
+  value: string
+}
+
+interface DiffHunk {
+  oldStart: number
+  oldCount: number
+  newStart: number
+  newCount: number
+  operations: DiffOperation[]
+}
+
 /**
- * @returns {string | null} Unified diff, or `null` when the inputs are identical
+ * @returns Unified diff, or `null` when the inputs are identical
  *   or too large for the in-memory LCS table.
  */
-export function createUnifiedDiff(before, after, { from = 'before', to = 'after', context = 3 } = {}) {
+export function createUnifiedDiff(
+  before: string,
+  after: string,
+  { from = 'before', to = 'after', context = 3 }: { from?: string; to?: string; context?: number } = {},
+): string | null {
   if (before === after) return null
 
   const a = before.split('\n')
@@ -49,7 +68,7 @@ export function createUnifiedDiff(before, after, { from = 'before', to = 'after'
   return lines.join('\n') + '\n'
 }
 
-function diffSequences(left, right) {
+function diffSequences(left: string[], right: string[]): DiffOperation[] {
   const rows = left.length + 1
   const columns = right.length + 1
   const lengths = new Uint32Array(rows * columns)
@@ -63,7 +82,7 @@ function diffSequences(left, right) {
     }
   }
 
-  const operations = []
+  const operations: DiffOperation[] = []
   let i = 0
   let j = 0
 
@@ -87,15 +106,15 @@ function diffSequences(left, right) {
   return operations
 }
 
-function buildHunks(operations, context, lineOffset = 0) {
-  const hunks = []
+function buildHunks(operations: DiffOperation[], context: number, lineOffset = 0): DiffHunk[] {
+  const hunks: DiffHunk[] = []
   let index = 0
 
   while (index < operations.length) {
     while (index < operations.length && operations[index].type === 'equal') index++
     if (index >= operations.length) break
 
-    let start = Math.max(0, index - context)
+    const start = Math.max(0, index - context)
     let end = index
 
     // Extend while changes are close enough to keep in one hunk.

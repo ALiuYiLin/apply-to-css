@@ -8,12 +8,25 @@
 
 const STYLE_OPEN_RE = /<style\b([^>]*)>/gi
 
+/** A parsed `<style>` block. */
+export interface StyleBlock {
+  index: number
+  openTag: string
+  attributes: Record<string, string>
+  lang: string
+  external: boolean
+  content: string
+  contentStart: number
+  contentEnd: number
+  contentStartLine: number
+}
+
 /** Parse the attributes of an opening tag. */
-export function parseAttributes(source) {
-  const attributes = {}
+export function parseAttributes(source: string): Record<string, string> {
+  const attributes: Record<string, string> = {}
   const attributeRe = /([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g
 
-  let match
+  let match: RegExpExecArray | null
   while ((match = attributeRe.exec(source))) {
     const name = match[1].toLowerCase()
     const value = match[2] ?? match[3] ?? match[4] ?? ''
@@ -25,24 +38,12 @@ export function parseAttributes(source) {
 
 /**
  * Find every `<style>` block in a Vue SFC.
- *
- * @returns {Array<{
- *   index: number,
- *   openTag: string,
- *   attributes: Record<string, string>,
- *   lang: string,
- *   external: boolean,
- *   content: string,
- *   contentStart: number,
- *   contentEnd: number,
- *   contentStartLine: number,
- * }>}
  */
-export function findStyleBlocks(source) {
-  const blocks = []
+export function findStyleBlocks(source: string): StyleBlock[] {
+  const blocks: StyleBlock[] = []
   STYLE_OPEN_RE.lastIndex = 0
 
-  let match
+  let match: RegExpExecArray | null
   while ((match = STYLE_OPEN_RE.exec(source))) {
     const openTag = match[0]
     const contentStart = match.index + openTag.length
@@ -71,7 +72,7 @@ export function findStyleBlocks(source) {
 }
 
 /** Replace style block contents while keeping everything else untouched. */
-export function replaceStyleBlocks(source, blocks, contents) {
+export function replaceStyleBlocks(source: string, blocks: StyleBlock[], contents: string[]): string {
   if (blocks.length !== contents.length) {
     throw new Error('replaceStyleBlocks: blocks/contents length mismatch')
   }
@@ -85,16 +86,16 @@ export function replaceStyleBlocks(source, blocks, contents) {
 }
 
 /** Detect the dominant line ending of a source string. */
-export function detectEol(source) {
+export function detectEol(source: string): string {
   return source.includes('\r\n') ? '\r\n' : '\n'
 }
 
 /** Normalize line endings to `\n` for processing. */
-export function normalizeEol(source) {
+export function normalizeEol(source: string): string {
   return source.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
 }
 
 /** Restore `\n` output to the given line ending. */
-export function restoreEol(source, eol) {
+export function restoreEol(source: string, eol: string): string {
   return eol === '\n' ? source : source.replaceAll('\n', eol)
 }

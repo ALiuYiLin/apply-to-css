@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { discoverFiles } from '../src/glob.js'
+import { discoverFiles } from '../dist/glob.js'
 
 function tree(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apply-to-css-glob-'))

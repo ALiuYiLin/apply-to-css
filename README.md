@@ -59,13 +59,29 @@
 - 组件内使用 `@reference`，或通过 `--css` 指定 Tailwind 入口
 - 仅处理 `lang` 为 `css` / `postcss`（或不写 `lang`）的 `<style>`；SCSS/Less 等会跳过并给出警告
 
+## 构建
+
+源码使用 TypeScript 编写，构建产物（JavaScript + 类型声明）输出到 `dist/`：
+
+```bash
+pnpm build       # 清理 dist/ 后执行 tsc，输出 dist/*.js、dist/*.d.ts
+pnpm typecheck   # 只做类型检查，不产出文件
+```
+
+`dist/` 不提交到仓库。首次安装依赖时包内的 `prepare` 脚本会自动构建（`dist/` 缺失或被清理后，
+执行 `pnpm build` 即可）；发布 npm 包时 `prepack` 也会先构建，保证发布产物里的 `dist/` 是最新的。
+
 ## 使用
 
-在 workspace 根目录安装依赖：
+在 workspace 根目录安装依赖（`prepare` 会自动把包构建到 `dist/`）：
 
 ```bash
 pnpm install
 ```
+
+> 包的 `bin` 名与包名一致（`@10coding/apply-to-css`）。npm / pnpm 安装时会把 scoped 名称
+> 归一成可执行命令 `apply-to-css`，所以下面仍用 `apply-to-css`；也可以直接按包名运行
+> （`npx @10coding/apply-to-css`）。
 
 然后通过根目录脚本运行（`--cwd` 指向目标 Vue 项目）：
 
@@ -80,11 +96,18 @@ pnpm apply-to-css --cwd ../your-vue-project --write
 pnpm apply-to-css --cwd ../your-vue-project --check
 ```
 
-也可以直接调用包的入口：
+也可以直接调用构建产物里的 bin：
 
 ```bash
-node packages/apply-to-css/bin/apply-to-css.js --cwd ../your-vue-project --diff
-pnpm --filter @10coding/apply-to-css exec apply-to-css --help
+node packages/apply-to-css/dist/bin.js --cwd ../your-vue-project --diff
+pnpm --filter @10coding/apply-to-css exec node dist/bin.js --help
+```
+
+发布之后可以直接按包名运行（bin 名与包名一致，npx / pnpm dlx 会命中它）：
+
+```bash
+npx @10coding/apply-to-css --cwd ../your-vue-project --diff
+pnpm dlx @10coding/apply-to-css --cwd ../your-vue-project --check
 ```
 
 默认扫描 `--cwd`（或当前目录）下的 `**/*.vue`，并忽略 `node_modules`、`dist`、`.nuxt` 等目录。默认只预览，不会修改文件。
@@ -93,6 +116,7 @@ pnpm --filter @10coding/apply-to-css exec apply-to-css --help
 
 ```bash
 cd packages/apply-to-css
+pnpm build
 pnpm link --global
 
 # 之后在目标项目目录中
@@ -137,7 +161,7 @@ pnpm playground:check    # CI 检查（示例源码默认未转换，退出码�
 pnpm playground:convert  # 写回 playground/src
 ```
 
-示例组件覆盖普通工具类、`hover:` / `focus-visible:` / `disabled:` / `dark:`、`max-lg:`、`group-hover:`、`[&_tbody_tr]`、`:deep()` 等写法。详情见 [`playground/README.md`](playground/README.md)。
+示例组件覆盖普通工具类、`hover:` / `focus-visible:` / `disabled:` / `dark:`、`max-lg:`、`group-hover:`、`[&_tbody_tr]`、`:deep()` 等写法。详情见 [`playground/README.md`](playground/README.md)。playground 里的转换命令直接调用本包构建后的 bin，所以改完包源码需要先 `pnpm build`。
 
 ## 工作原理
 
@@ -155,23 +179,26 @@ pnpm playground:convert  # 写回 playground/src
 
 ## 编程接口
 
-```js
-import { convertFiles } from '@10coding/apply-to-css'
+```ts
+import { convertFiles, type ConvertOptions, type ConvertResult } from '@10coding/apply-to-css'
 
-const result = await convertFiles({
+const options: ConvertOptions = {
   files: ['/abs/path/src/App.vue'],
   cwd: process.cwd(),
   css: 'src/style.css', // 可选，兜底主题
   write: false, // true 时写回文件
   removeReference: true,
   emitOutput: true, // 结果里带上转换后的源码
-})
+}
+
+const result: ConvertResult = await convertFiles(options)
 
 console.log(result.changedFiles, result.applyCount)
 console.log(result.errors)
 ```
 
-返回结构：
+包同时导出 `ConvertOptions`、`ConvertResult`、`ConvertFileResult`、`ConvertError` 等类型，
+入口文件声明在 `dist/index.d.ts`。返回结构：
 
 ```ts
 {
@@ -183,7 +210,6 @@ console.log(result.errors)
     generatedCount: number
     referenceRemoved: boolean
     output?: string
-    warnings: string[]
   }>
   changedFiles: number
   applyCount: number
@@ -205,10 +231,13 @@ console.log(result.errors)
 ## 开发
 
 ```bash
-pnpm test
+pnpm build       # 构建 packages/apply-to-css 到 dist/（TypeScript -> JavaScript + .d.ts）
+pnpm dev         # tsc --watch，改源码时持续构建 dist/
+pnpm typecheck   # 类型检查
+pnpm test        # 先构建，再用 Node 内置 test runner 跑 dist/ 上的测试
 ```
 
-测试使用 Node 内置 `node:test`，覆盖普通展开、变体、空壳规则、`@layer`、逗号选择器、`:deep()`、CRLF、错误定位、CLI 退出码等场景。
+测试使用 Node 内置 `node:test`，覆盖普通展开、变体、空壳规则、`@layer`、逗号选择器、`:deep()`、CRLF、错误定位、CLI 退出码等场景。测试直接导入 `dist/`，因此改完源码需要重新构建（`pnpm test` 会自动构建）。
 
 ## 发布
 
@@ -232,5 +261,5 @@ pnpm release
 
 `@10coding/apply-to-css` 的 `0.1.0` 尚未发布到 npm，首次发布可以直接执行 `pnpm test && pnpm release`；
 之后的每次发布都应先添加 changeset。发布前需要登录 npmjs（`npm login --registry=https://registry.npmjs.org`）
-或配置 `NPM_TOKEN`。包已通过 `publishConfig` 设为公开并固定发布到 npmjs。更完整的说明见
-[`.changeset/README.md`](.changeset/README.md)。
+或配置 `NPM_TOKEN`。包已通过 `publishConfig` 设为公开并固定发布到 npmjs；`prepack` 会在打包前自动构建
+`dist/`，因此 npm 上的产物无需手动构建。更完整的说明见 [`.changeset/README.md`](.changeset/README.md)。

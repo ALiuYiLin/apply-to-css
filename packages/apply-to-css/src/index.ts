@@ -1,70 +1,121 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import postcss from 'postcss'
-import { expandApplyRules, findDefaultTheme } from './tailwind.js'
+import { CssSyntaxError } from 'postcss'
+import type { Root } from 'postcss'
+import { ApplyExpansionError, expandApplyRules, findDefaultTheme } from './tailwind.js'
+import type { ApplyExpansion, ApplyRequest } from './tailwind.js'
 import { ApplyTransformError, transformStyleCss } from './transform.js'
 import { resolveStylesheetFile } from './resolve.js'
-import {
-  detectEol,
-  findStyleBlocks,
-  normalizeEol,
-  replaceStyleBlocks,
-  restoreEol,
-} from './sfc.js'
+import { detectEol, findStyleBlocks, normalizeEol, replaceStyleBlocks, restoreEol } from './sfc.js'
+import type { StyleBlock } from './sfc.js'
 
-/**
- * @typedef {object} ConvertFileResult
- * @property {string} file Absolute path.
- * @property {boolean} changed Whether the source needs to be written.
- * @property {number} applyCount Number of expanded `@apply` rules.
- * @property {number} declarationCount Number of generated declarations.
- * @property {number} generatedCount Number of extra (variant/at-rule) rules.
- * @property {boolean} referenceRemoved Whether a dangling `@reference` was removed.
- * @property {string} [output] Converted source (present when `emitOutput` is true).
- * @property {string[]} warnings
- */
+/** Per-file outcome of {@link convertFiles}. */
+export interface ConvertFileResult {
+  /** Absolute path. */
+  file: string
+  /** Whether the source needs to be written. */
+  changed: boolean
+  /** Number of expanded `@apply` rules. */
+  applyCount: number
+  /** Number of generated declarations. */
+  declarationCount: number
+  /** Number of extra (variant/at-rule) rules. */
+  generatedCount: number
+  /** Whether a dangling `@reference` was removed. */
+  referenceRemoved: boolean
+  /** Converted source (present when `emitOutput` is true). */
+  output?: string
+}
+
+/** One conversion error, with a best-effort source location. */
+export interface ConvertError {
+  file: string
+  line?: number
+  message: string
+}
+
+/** Aggregate result of {@link convertFiles}. */
+export interface ConvertResult {
+  files: ConvertFileResult[]
+  changedFiles: number
+  applyCount: number
+  declarationCount: number
+  generatedCount: number
+  warnings: string[]
+  errors: ConvertError[]
+}
+
+/** Options accepted by {@link convertFiles}. */
+export interface ConvertOptions {
+  /** Absolute paths to `.vue` files. */
+  files: string[]
+  /** Project root (used for fallback theme lookup). */
+  cwd?: string
+  /** Fallback Tailwind entry (absolute or relative to `cwd`). */
+  css?: string
+  /** Write converted files to disk. */
+  write?: boolean
+  /** Remove `@reference` when nothing else needs Tailwind. */
+  removeReference?: boolean
+  /** Include converted source in results. */
+  emitOutput?: boolean
+}
+
+/** One `@apply` rule found while scanning a style block. */
+interface ApplyCall {
+  params: string
+  line: number
+}
+
+/** A style block that needs conversion, plus its resolved theme. */
+interface BlockRecord {
+  block: StyleBlock
+  applies: ApplyCall[]
+  themeFile: string
+}
+
+/** A Vue file that contains style blocks needing conversion. */
+interface FileRecord {
+  file: string
+  eol: string
+  normalized: string
+  blocks: BlockRecord[]
+}
+
+/** Unique `@apply` requests grouped by Tailwind theme. */
+interface ThemeGroup {
+  requests: Map<string, ApplyRequest>
+}
 
 /**
  * Convert Tailwind `@apply` usage in `<style>` blocks of Vue SFCs.
- *
- * @param {object} options
- * @param {string[]} options.files Absolute paths to `.vue` files.
- * @param {string} [options.cwd] Project root (used for fallback theme lookup).
- * @param {string} [options.css] Fallback Tailwind entry (absolute or relative to cwd).
- * @param {boolean} [options.write] Write converted files to disk.
- * @param {boolean} [options.removeReference] Remove `@reference` when nothing else needs Tailwind.
- * @param {boolean} [options.emitOutput] Include converted source in results.
- * @returns {Promise<{
- *   files: ConvertFileResult[],
- *   changedFiles: number,
- *   applyCount: number,
- *   declarationCount: number,
- *   generatedCount: number,
- *   warnings: string[],
- *   errors: Array<{ file: string, line?: number, message: string }>,
- * }>}
  */
-export async function convertFiles({
-  files,
-  cwd = process.cwd(),
-  css,
-  write = false,
-  removeReference = true,
-  emitOutput = false,
-} = {}) {
+export async function convertFiles(options: ConvertOptions): Promise<ConvertResult> {
+  if (!options || typeof options !== 'object') {
+    throw new Error('convertFiles: at least one file is required')
+  }
+
+  const {
+    files,
+    cwd = process.cwd(),
+    css,
+    write = false,
+    removeReference = true,
+    emitOutput = false,
+  } = options
+
   if (!Array.isArray(files) || files.length === 0) {
     throw new Error('convertFiles: at least one file is required')
   }
 
   const fallbackTheme = resolveFallbackTheme(cwd, css)
-  const warnings = []
-  const errors = []
-  const results = []
+  const warnings: string[] = []
+  const errors: ConvertError[] = []
+  const results: ConvertFileResult[] = []
 
-  /** @type {Map<string, { requests: Map<string, { params: string, meta: object }> }>} */
-  const themeGroups = new Map()
-  /** @type {Array<{ file: string, eol: string, normalized: string, blocks: object[] }>} */
-  const fileRecords = []
+  const themeGroups = new Map<string, ThemeGroup>()
+  const fileRecords: FileRecord[] = []
 
   for (const file of files) {
     const raw = fs.readFileSync(file, 'utf8')
@@ -72,7 +123,7 @@ export async function convertFiles({
     const source = normalizeEol(raw)
     const blocks = findStyleBlocks(source)
 
-    const record = { file, eol, normalized: source, blocks: [] }
+    const record: FileRecord = { file, eol, normalized: source, blocks: [] }
 
     for (const block of blocks) {
       if (block.external) {
@@ -91,20 +142,20 @@ export async function convertFiles({
 
       if (!block.content.includes('@apply')) continue
 
-      let root
+      let root: Root
       try {
         root = postcss.parse(block.content, { from: file })
       } catch (error) {
-        const line = error.line ? block.contentStartLine + error.line - 1 : undefined
+        const line = parseErrorLine(error)
         errors.push({
           file,
-          line,
-          message: `Failed to parse <style> block: ${error.reason ?? error.message}`,
+          line: line ? block.contentStartLine + line - 1 : undefined,
+          message: `Failed to parse <style> block: ${parseErrorMessage(error)}`,
         })
         continue
       }
 
-      const applies = []
+      const applies: ApplyCall[] = []
       root.walkAtRules((atRule) => {
         if (atRule.name.toLowerCase() !== 'apply') return
         applies.push({
@@ -115,15 +166,15 @@ export async function convertFiles({
 
       if (applies.length === 0) continue
 
-      let themeFile
+      let themeFile: string
       try {
         themeFile = resolveThemeForBlock(root, file, fallbackTheme)
       } catch (error) {
-        errors.push({ file, message: error.message })
+        errors.push({ file, message: errorMessage(error) })
         continue
       }
 
-      const group = themeGroups.get(themeFile) ?? { requests: new Map() }
+      const group = themeGroups.get(themeFile) ?? { requests: new Map<string, ApplyRequest>() }
       for (const apply of applies) {
         const existing = group.requests.get(apply.params)
         if (existing) {
@@ -148,19 +199,18 @@ export async function convertFiles({
     fileRecords.push(record)
   }
 
-  /** @type {Map<string, { rules: Map<string, import('postcss').Rule>, propertyDefaults: Map<string, string> }>} */
-  const expansionsByTheme = new Map()
+  const expansionsByTheme = new Map<string, ApplyExpansion>()
 
   for (const [themeFile, group] of themeGroups) {
     try {
       const expanded = await expandApplyRules(themeFile, [...group.requests.values()])
       expansionsByTheme.set(themeFile, expanded)
     } catch (error) {
-      const firstRequest = error.requests?.[0]
+      const firstRequest = error instanceof ApplyExpansionError ? error.requests[0] : undefined
       errors.push({
-        file: firstRequest?.meta?.file ?? themeFile,
-        line: firstRequest?.meta?.line,
-        message: error.message,
+        file: firstRequest?.meta.file ?? themeFile,
+        line: firstRequest?.meta.line,
+        message: errorMessage(error),
       })
     }
   }
@@ -201,13 +251,14 @@ export async function convertFiles({
           expansionFor: (params) => themeExpansion.rules.get(params.trim()),
         })
       } catch (error) {
-        const line = error instanceof ApplyTransformError && error.line
-          ? block.contentStartLine + error.line - 1
-          : undefined
+        const line =
+          error instanceof ApplyTransformError && error.line
+            ? block.contentStartLine + error.line - 1
+            : undefined
         errors.push({
           file: record.file,
           line,
-          message: error.message,
+          message: errorMessage(error),
         })
         fileHasError = true
         continue
@@ -264,7 +315,7 @@ export async function convertFiles({
   }
 }
 
-function resolveFallbackTheme(cwd, css) {
+function resolveFallbackTheme(cwd: string, css: string | undefined): string | null {
   if (css) {
     const absolute = path.resolve(cwd, css)
     if (!fs.existsSync(absolute)) {
@@ -277,7 +328,7 @@ function resolveFallbackTheme(cwd, css) {
   return detected ? fs.realpathSync(detected) : null
 }
 
-function resolveThemeForBlock(root, file, fallbackTheme) {
+function resolveThemeForBlock(root: Root, file: string, fallbackTheme: string | null): string {
   const reference = findReference(root)
 
   if (!reference) {
@@ -293,8 +344,8 @@ function resolveThemeForBlock(root, file, fallbackTheme) {
   return fs.realpathSync(resolved)
 }
 
-function findReference(root) {
-  let reference = null
+function findReference(root: Root): string | null {
+  let reference: string | null = null
   root.walkAtRules((atRule) => {
     if (reference || atRule.name.toLowerCase() !== 'reference') return
     const value = atRule.params.trim().replace(/^url\(\s*/, '').replace(/\s*\)$/, '')
@@ -303,7 +354,20 @@ function findReference(root) {
   return reference
 }
 
-function relative(cwd, file) {
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function parseErrorMessage(error: unknown): string {
+  if (error instanceof CssSyntaxError) return error.reason
+  return errorMessage(error)
+}
+
+function parseErrorLine(error: unknown): number | undefined {
+  return error instanceof CssSyntaxError ? error.line : undefined
+}
+
+function relative(cwd: string, file: string): string {
   const value = path.relative(cwd, file)
   return value.startsWith('..') ? file : value.replaceAll('\\', '/')
 }

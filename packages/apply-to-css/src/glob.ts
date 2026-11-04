@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import type { Dirent } from 'node:fs'
 import path from 'node:path'
 
 /** Directories that are never worth walking. */
@@ -18,7 +19,7 @@ const DEFAULT_IGNORED_DIRS = new Set([
 ])
 
 /** Expand a single `{a,b}` group into several globs. */
-function expandBraces(pattern) {
+function expandBraces(pattern: string): string[] {
   const start = pattern.indexOf('{')
   if (start === -1) return [pattern]
 
@@ -38,8 +39,8 @@ function expandBraces(pattern) {
   return [pattern]
 }
 
-function splitTopLevel(value) {
-  const parts = []
+function splitTopLevel(value: string): string[] {
+  const parts: string[] = []
   let depth = 0
   let start = 0
   for (let i = 0; i < value.length; i++) {
@@ -56,7 +57,7 @@ function splitTopLevel(value) {
 }
 
 /** Convert the common glob syntax (`**`, `*`, `?`, `{}`) to a RegExp. */
-export function globToRegExp(pattern) {
+export function globToRegExp(pattern: string): RegExp {
   const normalized = pattern.replaceAll('\\', '/').replace(/^\.\//, '')
   let source = ''
 
@@ -94,7 +95,7 @@ export function globToRegExp(pattern) {
   return new RegExp(`^${source}$`)
 }
 
-function normalizeRelative(value) {
+function normalizeRelative(value: string): string {
   return value.replaceAll('\\', '/').replace(/^\.\//, '')
 }
 
@@ -104,23 +105,31 @@ function normalizeRelative(value) {
  * Patterns without glob magic are treated as files, or as directories whose
  * `**\/*.vue` children are included.
  */
-export function discoverFiles({ cwd, patterns, excludes = [] }) {
+export function discoverFiles({
+  cwd,
+  patterns,
+  excludes = [],
+}: {
+  cwd: string
+  patterns: string[]
+  excludes?: string[]
+}): string[] {
   const ignore = new Set(DEFAULT_IGNORED_DIRS)
-  const found = new Set()
+  const found = new Set<string>()
 
   const includeMatchers = patterns.flatMap((pattern) => expandBraces(normalizeRelative(pattern))).map(globToRegExp)
   const excludeMatchers = excludes
     .flatMap((pattern) => expandBraces(normalizeRelative(pattern)))
     .map(globToRegExp)
 
-  const isExcluded = (relative) => {
+  const isExcluded = (relative: string): boolean => {
     const posix = relative.replaceAll('\\', '/')
     if (excludeMatchers.some((matcher) => matcher.test(posix))) return true
     return posix.split('/').some((part) => ignore.has(part))
   }
 
-  const walk = (dir) => {
-    let entries
+  const walk = (dir: string): void => {
+    let entries: Dirent[]
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true })
     } catch {
@@ -168,6 +177,6 @@ export function discoverFiles({ cwd, patterns, excludes = [] }) {
   return [...found].sort((a, b) => a.localeCompare(b))
 }
 
-function hasGlobMagic(pattern) {
+function hasGlobMagic(pattern: string): boolean {
   return ['*', '?', '{', '['].some((character) => pattern.includes(character))
 }

@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
+import type { ParseArgsOptionsConfig } from 'node:util'
 import { convertFiles } from './index.js'
+import type { ConvertResult } from './index.js'
 import { discoverFiles } from './glob.js'
 import { createUnifiedDiff } from './diff.js'
 
@@ -17,22 +19,28 @@ const OPTIONS = {
   verbose: { type: 'boolean', short: 'v' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean' },
+} as const satisfies ParseArgsOptionsConfig
+
+/** Output sinks used by the CLI. Tests inject collectors to capture output. */
+export interface RunCliIo {
+  stdout?: (line: string) => void
+  stderr?: (line: string) => void
 }
 
 /**
- * @param {string[]} argv
- * @param {{ stdout?: (line: string) => void, stderr?: (line: string) => void }} [io]
- * @returns {Promise<number>} exit code
+ * Run the CLI.
+ *
+ * @returns Process exit code (0 success, 1 conversion/check failure, 2 usage error).
  */
-export async function runCli(argv, io = {}) {
-  const stdout = io.stdout ?? ((line) => process.stdout.write(`${line}\n`))
-  const stderr = io.stderr ?? ((line) => process.stderr.write(`${line}\n`))
+export async function runCli(argv: string[], io: RunCliIo = {}): Promise<number> {
+  const stdout = io.stdout ?? ((line: string) => process.stdout.write(`${line}\n`))
+  const stderr = io.stderr ?? ((line: string) => process.stderr.write(`${line}\n`))
 
   let parsed
   try {
     parsed = parseArgs({ args: argv, allowPositionals: true, options: OPTIONS })
   } catch (error) {
-    stderr(`apply-to-css: ${error.message}`)
+    stderr(`apply-to-css: ${errorMessage(error)}`)
     stderr('Run `apply-to-css --help` for usage.')
     return 2
   }
@@ -56,7 +64,7 @@ export async function runCli(argv, io = {}) {
 
   const cwd = path.resolve(values.cwd ?? process.cwd())
   const patterns = positionals.length > 0 ? positionals : ['**/*.vue']
-  const excludes = values.exclude ?? []
+  const excludes = values.exclude ? [...values.exclude] : []
 
   const files = discoverFiles({ cwd, patterns, excludes })
   if (files.length === 0) {
@@ -64,13 +72,12 @@ export async function runCli(argv, io = {}) {
     return 1
   }
 
-  /** @type {Map<string, string>} */
-  let originals = new Map()
+  const originals = new Map<string, string>()
   if (values.diff) {
     for (const file of files) originals.set(file, fs.readFileSync(file, 'utf8'))
   }
 
-  let result
+  let result: ConvertResult
   try {
     result = await convertFiles({
       files,
@@ -81,7 +88,7 @@ export async function runCli(argv, io = {}) {
       emitOutput: Boolean(values.diff),
     })
   } catch (error) {
-    stderr(`apply-to-css: ${error.message}`)
+    stderr(`apply-to-css: ${errorMessage(error)}`)
     return 1
   }
 
@@ -137,7 +144,8 @@ export async function runCli(argv, io = {}) {
       }
     }
 
-    const totalDeclarations = result.declarationCount ?? changed.reduce((sum, file) => sum + file.declarationCount, 0)
+    const totalDeclarations =
+      result.declarationCount ?? changed.reduce((sum, file) => sum + file.declarationCount, 0)
 
     if (result.errors.length > 0) {
       stderr('')
@@ -168,17 +176,23 @@ export async function runCli(argv, io = {}) {
   return 0
 }
 
-function relative(cwd, file) {
+function relative(cwd: string, file: string): string {
   const value = path.relative(cwd, file)
   return (value.startsWith('..') ? file : value).replaceAll('\\', '/')
 }
 
-function readVersion() {
-  const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function readVersion(): string {
+  const packageJson = JSON.parse(
+    fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { version: string }
   return packageJson.version
 }
 
-function helpText() {
+function helpText(): string {
   return `apply-to-css ${readVersion()}
 
 将 Vue 单文件组件 <style> 中的 Tailwind @apply 规则展开为普通 CSS 声明。

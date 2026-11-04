@@ -6,17 +6,17 @@ import { fileURLToPath } from 'node:url'
 const STYLE_CONDITIONS = ['style', 'css', 'sass', 'import', 'default', 'require']
 const TOOL_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
-function stripBom(content) {
+function stripBom(content: string): string {
   return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content
 }
 
 /** Read a UTF-8 text file, stripping a BOM if present. */
-export function readTextFile(file) {
+export function readTextFile(file: string): string {
   return stripBom(fs.readFileSync(file, 'utf8'))
 }
 
 /** Walk up from `from` looking for `<dir>/node_modules/<pkgName>`. */
-export function findPackageDir(pkgName, from) {
+export function findPackageDir(pkgName: string, from: string): string | null {
   let dir = path.resolve(from)
   if (!isDirectory(dir)) dir = path.dirname(dir)
 
@@ -30,7 +30,7 @@ export function findPackageDir(pkgName, from) {
   }
 }
 
-function isDirectory(value) {
+function isDirectory(value: string): boolean {
   try {
     return fs.statSync(value).isDirectory()
   } catch {
@@ -38,7 +38,7 @@ function isDirectory(value) {
   }
 }
 
-function isFile(value) {
+function isFile(value: string): boolean {
   try {
     return fs.statSync(value).isFile()
   } catch {
@@ -46,7 +46,7 @@ function isFile(value) {
   }
 }
 
-function pickExport(value, conditions = STYLE_CONDITIONS) {
+function pickExport(value: unknown, conditions: readonly string[] = STYLE_CONDITIONS): string | null {
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -57,16 +57,17 @@ function pickExport(value, conditions = STYLE_CONDITIONS) {
   }
   if (!value || typeof value !== 'object') return null
 
+  const record = value as Record<string, unknown>
   for (const condition of conditions) {
-    if (condition in value) {
-      const picked = pickExport(value[condition], conditions)
+    if (condition in record) {
+      const picked = pickExport(record[condition], conditions)
       if (picked) return picked
     }
   }
   return null
 }
 
-function resolveExportTarget(pkg, subpath) {
+function resolveExportTarget(pkg: Record<string, unknown>, subpath: string): string | null {
   const exportsField = pkg.exports
   if (!exportsField) return null
 
@@ -78,7 +79,7 @@ function resolveExportTarget(pkg, subpath) {
     Object.keys(exportsField).some((entry) => entry.startsWith('.'))
 
   if (isSubpathMap) {
-    const target = exportsField[key]
+    const target = (exportsField as Record<string, unknown>)[key]
     return target ? pickExport(target) : null
   }
 
@@ -86,7 +87,7 @@ function resolveExportTarget(pkg, subpath) {
   return subpath ? null : pickExport(exportsField)
 }
 
-function resolveAsFile(candidate) {
+function resolveAsFile(candidate: string): string | null {
   if (isFile(candidate)) return candidate
   if (!path.extname(candidate) && isFile(`${candidate}.css`)) return `${candidate}.css`
   if (isDirectory(candidate)) {
@@ -104,7 +105,11 @@ function resolveAsFile(candidate) {
  * Supports relative paths and package ids such as `tailwindcss` or
  * `tw-animate-css`, preferring the `style`/`css` export conditions.
  */
-export function resolveStylesheetFile(id, base, { fallbackToToolRoot = false } = {}) {
+export function resolveStylesheetFile(
+  id: string,
+  base: string,
+  { fallbackToToolRoot = false }: { fallbackToToolRoot?: boolean } = {},
+): string {
   const clean = id.trim().replace(/^url\(\s*/, '').replace(/\s*\)$/, '').replace(/^['"]|['"]$/g, '')
 
   if (clean.startsWith('.') || path.isAbsolute(clean)) {
@@ -120,24 +125,25 @@ export function resolveStylesheetFile(id, base, { fallbackToToolRoot = false } =
     findPackageDir(pkgName, base) ?? (fallbackToToolRoot ? findPackageDir(pkgName, TOOL_ROOT) : null)
   if (!pkgDir) throw new Error(`Cannot resolve package "${pkgName}" from ${base}`)
 
-  let pkg = {}
+  let pkg: Record<string, unknown> = {}
   const pkgJsonPath = path.join(pkgDir, 'package.json')
   if (isFile(pkgJsonPath)) {
     try {
-      pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'))
+      pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')) as Record<string, unknown>
     } catch {
       pkg = {}
     }
   }
 
   const exported = resolveExportTarget(pkg, subpath)
-  const candidates = []
+  const candidates: string[] = []
 
   if (exported) candidates.push(path.join(pkgDir, exported))
   if (subpath) candidates.push(path.join(pkgDir, subpath))
   if (!subpath) {
     for (const field of ['style', 'css', 'sass']) {
-      if (typeof pkg[field] === 'string') candidates.push(path.join(pkgDir, pkg[field]))
+      const value = pkg[field]
+      if (typeof value === 'string') candidates.push(path.join(pkgDir, value))
     }
     candidates.push(path.join(pkgDir, 'index.css'))
     if (typeof pkg.main === 'string') candidates.push(path.join(pkgDir, pkg.main))
@@ -152,7 +158,7 @@ export function resolveStylesheetFile(id, base, { fallbackToToolRoot = false } =
 }
 
 /** Resolve a JS/TS module (used for Tailwind `@plugin`/`@config`). */
-export function resolveModuleFile(id, base) {
+export function resolveModuleFile(id: string, base: string): string {
   const require = createRequire(path.join(path.resolve(base), '__apply_to_css__.cjs'))
   try {
     return require.resolve(id)
@@ -175,7 +181,7 @@ export function resolveModuleFile(id, base) {
     const pkgJson = path.join(pkgDir, 'package.json')
     if (!isFile(pkgJson)) continue
     try {
-      const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8'))
+      const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8')) as Record<string, unknown>
       if (typeof pkg[field] === 'string') {
         const file = path.join(pkgDir, pkg[field])
         if (isFile(file)) return file

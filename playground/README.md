@@ -60,6 +60,9 @@ pnpm playground:check
 pnpm playground:convert
 ```
 
+这些命令调用的是 `@10coding/apply-to-css` 构建后的 bin（`dist/bin.js`）。首次 `pnpm install` 会自动构建一次；
+如果刚改过 `packages/apply-to-css/src` 或 `dist/` 缺失，先执行 `pnpm build` 再运行上面的命令。
+
 也可以直接调用包：
 
 ```bash

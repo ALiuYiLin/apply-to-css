@@ -4,11 +4,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import postcss from 'postcss'
-import { convertFiles } from '../src/index.js'
-import { runCli } from '../src/cli.js'
-import { findStyleBlocks } from '../src/sfc.js'
-import { globToRegExp } from '../src/glob.js'
-import { createUnifiedDiff } from '../src/diff.js'
+import { convertFiles } from '../dist/index.js'
+import { runCli } from '../dist/cli.js'
+import { findStyleBlocks } from '../dist/sfc.js'
+import { globToRegExp } from '../dist/glob.js'
+import { createUnifiedDiff } from '../dist/diff.js'
 
 const THEME = fs.readFileSync(new URL('./fixtures/theme.css', import.meta.url), 'utf8')
 

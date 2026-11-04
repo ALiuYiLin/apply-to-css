@@ -4,10 +4,10 @@
  * Split a selector list at top-level commas, ignoring commas inside strings,
  * parentheses and attribute selectors.
  */
-export function splitSelectors(selector) {
-  const parts = []
+export function splitSelectors(selector: string): string[] {
+  const parts: string[] = []
   let depth = 0
-  let quote = null
+  let quote: string | null = null
   let start = 0
 
   for (let index = 0; index < selector.length; index++) {
@@ -33,10 +33,10 @@ export function splitSelectors(selector) {
 }
 
 /** Compose a parent selector list with one nested selector. */
-export function composeSelectors(parentSelector, childSelector) {
+export function composeSelectors(parentSelector: string, childSelector: string): string {
   const parents = splitSelectors(parentSelector)
   const children = splitSelectors(childSelector)
-  const composed = []
+  const composed: string[] = []
 
   for (const child of children) {
     for (const parent of parents) {

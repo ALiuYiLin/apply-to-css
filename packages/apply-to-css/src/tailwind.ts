@@ -4,33 +4,99 @@ import crypto from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { compile } from 'tailwindcss'
 import postcss from 'postcss'
+import type { AtRule, Container, Document, Root, Rule } from 'postcss'
+import { childNodes, isAtRule, isRoot, isRule } from './ast.js'
+import type { AtRuleInfo } from './ast.js'
 import { splitSelectors } from './selectors.js'
 import { readTextFile, resolveModuleFile, resolveStylesheetFile } from './resolve.js'
 
+/** One unique `@apply` parameter string and where it was first seen. */
+export interface ApplyRequest {
+  params: string
+  meta: ApplyRequestMeta
+}
+
+/** Source metadata used to report expansion failures. */
+export interface ApplyRequestMeta {
+  file: string
+  line: number
+  location: string
+  occurrences: number
+}
+
+/** Output of expanding a batch of `@apply` rules against one theme. */
+export interface ApplyExpansion {
+  /** Synthetic rule per `@apply` parameter string. */
+  rules: Map<string, Rule>
+  /** `@property` initial values, used as `var()` fallbacks. */
+  propertyDefaults: Map<string, string>
+}
+
 /** Thrown when Tailwind cannot expand one or more `@apply` rules. */
 export class ApplyExpansionError extends Error {
-  constructor(message, { themeFile, cause, requests = [] } = {}) {
-    super(message, { cause })
+  /** Tailwind entry the expansion failed against. */
+  readonly themeFile: string | undefined
+  /** Requests that could not be expanded (when known). */
+  readonly requests: ApplyRequest[]
+
+  constructor(
+    message: string,
+    options: { themeFile?: string; cause?: unknown; requests?: ApplyRequest[] } = {},
+  ) {
+    super(message, { cause: options.cause })
     this.name = 'ApplyExpansionError'
-    this.themeFile = themeFile
-    this.requests = requests
+    this.themeFile = options.themeFile
+    this.requests = options.requests ?? []
   }
 }
 
-async function loadStylesheet(id, base) {
+/** Read a stylesheet for Tailwind's `loadStylesheet` hook. */
+async function loadStylesheet(
+  id: string,
+  base: string,
+): Promise<{ path: string; base: string; content: string }> {
   const file = resolveStylesheetFile(id, base, { fallbackToToolRoot: true })
   return { path: file, base: path.dirname(file), content: readTextFile(file) }
 }
 
-async function loadModule(id, base) {
+/**
+ * Resolve a JS/TS module for Tailwind's `loadModule` hook.
+ *
+ * The dynamic import intentionally types the loaded value as `any`: a plugin or
+ * config module can be ESM (default export) or CJS (module object), and the
+ * resolved `Plugin | Config` union declared by Tailwind cannot be expressed for
+ * an id only known at runtime.
+ */
+async function loadModule(
+  id: string,
+  base: string,
+): Promise<{ path: string; base: string; module: any }> {
   const file = resolveModuleFile(id, base)
-  const imported = await import(pathToFileURL(file).href)
+  const imported: any = await import(pathToFileURL(file).href)
   return { path: file, base: path.dirname(file), module: imported.default ?? imported }
 }
 
 const COMPILE_OPTIONS = { loadStylesheet, loadModule }
 
-async function compileOnce(themeFile, requests, probePrefix) {
+/** One `@apply` output captured as a synthetic, possibly nested rule. */
+interface CompiledExpansion {
+  rules: Map<number, Rule>
+  propertyDefaults: Map<string, string>
+  output: string
+}
+
+/** A rule Tailwind emitted for one probe, with its enclosing at-rules. */
+interface ProbeMatch {
+  atContext: AtRuleInfo[]
+  suffix: string
+  rule: Rule
+}
+
+async function compileOnce(
+  themeFile: string,
+  requests: ApplyRequest[],
+  probePrefix: string,
+): Promise<CompiledExpansion> {
   const theme = readTextFile(themeFile)
   const probes = requests
     .map((request, index) => `.${probePrefix}_${index} { @apply ${request.params}; }`)
@@ -56,12 +122,12 @@ async function compileOnce(themeFile, requests, probePrefix) {
  * Tailwind. Adding those values as `var()` fallbacks keeps the converted CSS
  * working even when the `@property` rules themselves are not loaded.
  */
-function collectPropertyDefaults(root) {
-  const defaults = new Map()
+function collectPropertyDefaults(root: Root): Map<string, string> {
+  const defaults = new Map<string, string>()
 
   root.walkAtRules('property', (atRule) => {
     const name = atRule.params.trim()
-    let initialValue
+    let initialValue: string | undefined
     atRule.walkDecls('initial-value', (declaration) => {
       initialValue = declaration.value
     })
@@ -83,20 +149,19 @@ function collectPropertyDefaults(root) {
  * The synthetic rule restores the nested shape (`&:hover`, `@media { ... }`)
  * that `flattenExpansion` expects, regardless of how Tailwind grouped it.
  */
-function collectProbeRules(root, probePrefix) {
+function collectProbeRules(root: Root, probePrefix: string): Map<number, Rule> {
   const pattern = new RegExp(`^\\.${escapeRegExp(probePrefix)}_(\\d+)(?![\\w-])`)
-  /** @type {Map<number, Array<{ atContext: Array<{ name: string, params: string }>, suffix: string, rule: import('postcss').Rule }>>} */
-  const matches = new Map()
+  const matches = new Map<number, ProbeMatch[]>()
 
   root.walkRules((rule) => {
-    const atContext = []
-    let ancestor = rule.parent
+    const atContext: AtRuleInfo[] = []
+    let ancestor: Container | Document | undefined = rule.parent
 
-    while (ancestor && ancestor.type !== 'root') {
+    while (ancestor && !isRoot(ancestor)) {
       // A rule nested in another rule already belongs to that probe's cloned
       // subtree; reading it separately would duplicate it.
-      if (ancestor.type === 'rule') return
-      if (ancestor.type === 'atrule') {
+      if (isRule(ancestor)) return
+      if (isAtRule(ancestor)) {
         atContext.unshift({ name: ancestor.name, params: ancestor.params })
       }
       ancestor = ancestor.parent
@@ -114,23 +179,24 @@ function collectProbeRules(root, probePrefix) {
     }
   })
 
-  const rules = new Map()
+  const rules = new Map<number, Rule>()
 
   for (const [index, entries] of matches) {
     const synthetic = postcss.rule({ selector: `.${probePrefix}_${index}` })
 
     for (const { atContext, suffix, rule } of entries) {
       if (suffix === '' && atContext.length === 0) {
-        for (const node of rule.nodes) synthetic.append(node.clone())
+        for (const node of childNodes(rule)) synthetic.append(node.clone())
         continue
       }
 
       const inner = postcss.rule({ selector: suffix === '' ? '&' : `&${suffix}` })
-      for (const node of rule.nodes) inner.append(node.clone())
+      for (const node of childNodes(rule)) inner.append(node.clone())
 
-      let wrapper = inner
+      let wrapper: Rule | AtRule = inner
       for (let depth = atContext.length - 1; depth >= 0; depth--) {
-        const atRule = postcss.atRule({ ...atContext[depth] })
+        const { name, params } = atContext[depth]
+        const atRule = postcss.atRule({ name, params })
         atRule.append(wrapper)
         wrapper = atRule
       }
@@ -144,18 +210,24 @@ function collectProbeRules(root, probePrefix) {
   return rules
 }
 
-function escapeRegExp(value) {
+function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
-function unknownUtilityFromError(error) {
-  const message = error instanceof Error ? error.message : String(error)
-  const match = /unknown utility class [`'"]([^`'"]+)[`'"]/i.exec(message)
+function unknownUtilityFromError(error: unknown): string | null {
+  const match = /unknown utility class [`'"]([^`'"]+)[`'"]/i.exec(errorMessage(error))
   return match?.[1] ?? null
 }
 
-async function isolateFailures(themeFile, requests, probePrefix) {
+async function isolateFailures(
+  themeFile: string,
+  requests: ApplyRequest[],
+  probePrefix: string,
+): Promise<ApplyRequest[]> {
   try {
     await compileOnce(themeFile, requests, probePrefix)
     return []
@@ -166,7 +238,7 @@ async function isolateFailures(themeFile, requests, probePrefix) {
     const left = requests.slice(0, middle)
     const right = requests.slice(middle)
 
-    const failures = []
+    const failures: ApplyRequest[] = []
     for (const half of [left, right]) {
       if (half.length === 0) continue
       failures.push(...(await isolateFailures(themeFile, half, probePrefix)))
@@ -178,7 +250,7 @@ async function isolateFailures(themeFile, requests, probePrefix) {
   }
 }
 
-function describeRequests(requests) {
+function describeRequests(requests: ApplyRequest[]): string {
   const params = requests.map((request) => `\`@apply ${request.params};\``)
   if (params.length === 1) return params[0]
   const preview = params.slice(0, 5).join(', ')
@@ -190,20 +262,16 @@ function describeRequests(requests) {
  *
  * All rules are compiled in a single pass for speed; on error the batch is
  * bisected so the failing rule(s) can be reported with their source location.
- *
- * @param {string} themeFile Absolute path to the Tailwind CSS entry.
- * @param {Array<{params: string, meta?: object}>} requests Unique requests.
- * @returns {Promise<{
- *   rules: Map<string, import('postcss').Rule>,
- *   propertyDefaults: Map<string, string>,
- * }>}
  */
-export async function expandApplyRules(themeFile, requests) {
+export async function expandApplyRules(
+  themeFile: string,
+  requests: ApplyRequest[],
+): Promise<ApplyExpansion> {
   if (requests.length === 0) return { rules: new Map(), propertyDefaults: new Map() }
 
   const probePrefix = `__apply_to_css_${crypto.randomBytes(6).toString('hex')}`
 
-  let compiled
+  let compiled: CompiledExpansion
   try {
     compiled = await compileOnce(themeFile, requests, probePrefix)
   } catch (error) {
@@ -212,27 +280,30 @@ export async function expandApplyRules(themeFile, requests) {
       await compileOnce(themeFile, [], probePrefix)
     } catch (themeError) {
       throw new ApplyExpansionError(
-        `Tailwind failed to compile the theme ${themeFile}: ${themeError.message}`,
+        `Tailwind failed to compile the theme ${themeFile}: ${errorMessage(themeError)}`,
         { themeFile, cause: themeError },
       )
     }
 
     const hintedClass = unknownUtilityFromError(error)
-    let failing = hintedClass
-      ? requests.filter((request) => request.params.split(/\s+/).includes(hintedClass))
-      : []
+    let failing: ApplyRequest[] = []
+    if (hintedClass !== null) {
+      const hinted = hintedClass
+      failing = requests.filter((request) => request.params.split(/\s+/).includes(hinted))
+    }
 
     if (failing.length === 0) {
       failing = await isolateFailures(themeFile, requests, probePrefix)
     }
 
-    throw new ApplyExpansionError(
-      `Cannot expand ${describeRequests(failing)}: ${error.message}`,
-      { themeFile, cause: error, requests: failing },
-    )
+    throw new ApplyExpansionError(`Cannot expand ${describeRequests(failing)}: ${errorMessage(error)}`, {
+      themeFile,
+      cause: error,
+      requests: failing,
+    })
   }
 
-  const expansions = new Map()
+  const expansions = new Map<string, Rule>()
 
   for (let index = 0; index < requests.length; index++) {
     const rule = compiled.rules.get(index)
@@ -249,7 +320,7 @@ export async function expandApplyRules(themeFile, requests) {
 }
 
 /** Find the Tailwind entry stylesheet for a project. */
-export function findDefaultTheme(cwd) {
+export function findDefaultTheme(cwd: string): string | null {
   const candidates = [
     'src/style.css',
     'src/styles/style.css',

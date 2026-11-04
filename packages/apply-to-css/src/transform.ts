@@ -1,16 +1,46 @@
 import postcss from 'postcss'
+import type { AtRule, ChildNode, Container, Declaration, Document, Node, Root, Rule } from 'postcss'
+import { childNodes, isAtRule, isRoot, isRule } from './ast.js'
+import type { AtRuleInfo } from './ast.js'
 import { composeSelectors } from './selectors.js'
 
 export { composeSelectors, splitSelectors } from './selectors.js'
 
 /** Thrown when an `@apply` rule cannot be rewritten. */
 export class ApplyTransformError extends Error {
-  constructor(message, { line, column, cause } = {}) {
-    super(message, { cause })
+  /** 1-based line inside the style block, when known. */
+  readonly line: number | undefined
+  /** 1-based column inside the style block, when known. */
+  readonly column: number | undefined
+
+  constructor(message: string, options: { line?: number; column?: number; cause?: unknown } = {}) {
+    super(message, { cause: options.cause })
     this.name = 'ApplyTransformError'
-    this.line = line
-    this.column = column
+    this.line = options.line
+    this.column = options.column
   }
+}
+
+/** Options accepted by {@link transformStyleCss}. */
+export interface TransformStyleOptions {
+  /** Look up the synthetic rule exported by Tailwind for one `@apply` parameter string. */
+  expansionFor: (params: string) => Rule | undefined
+  /** `@property` initial values used as `var()` fallbacks. */
+  propertyDefaults?: Map<string, string>
+  /** Remove `@reference` once nothing else in the block needs Tailwind. */
+  removeReference?: boolean
+  /** Source path used for PostCSS error positions. */
+  from?: string
+}
+
+/** Result returned by {@link transformStyleCss}. */
+export interface TransformStyleResult {
+  root: Root
+  css: string
+  applyCount: number
+  declarationCount: number
+  generatedCount: number
+  referenceRemoved: boolean
 }
 
 const TAILWIND_AT_RULES = new Set([
@@ -25,25 +55,24 @@ const TAILWIND_AT_RULES = new Set([
   'tailwind',
 ])
 
+/** One flattened rule produced from a nested Tailwind expansion. */
+interface FlattenedRule {
+  atContext: AtRuleInfo[]
+  selector: string
+  declarations: Declaration[]
+}
+
 /**
  * Rewrite every `@apply` rule in a CSS string into plain declarations.
  *
  * Nested output produced by Tailwind for variants (`&:hover`, `@media`, ...)
  * is flattened into normal top-level rules, so the result does not rely on
  * CSS nesting support in the browser or in Vue's scoped-style transform.
- *
- * @param {string} css
- * @param {{
- *   expansionFor: (params: string) => import('postcss').Rule | undefined,
- *   propertyDefaults?: Map<string, string>,
- *   removeReference?: boolean,
- *   from?: string,
- * }} options
  */
 export function transformStyleCss(
-  css,
-  { expansionFor, propertyDefaults, removeReference = true, from } = {},
-) {
+  css: string,
+  { expansionFor, propertyDefaults, removeReference = true, from }: TransformStyleOptions,
+): TransformStyleResult {
   const root = postcss.parse(css, { from })
 
   let applyCount = 0
@@ -51,46 +80,47 @@ export function transformStyleCss(
   let generatedCount = 0
   let referenceRemoved = false
 
-  /** @type {Map<import('postcss').Rule, import('postcss').Node>} */
-  const insertionAnchors = new Map()
-  /** @type {Set<import('postcss').Rule>} */
-  const emptiedRules = new Set()
+  const insertionAnchors = new Map<Rule, ChildNode>()
+  const emptiedRules = new Set<Rule>()
 
   root.walkAtRules((atRule) => {
     if (atRule.name.toLowerCase() !== 'apply') return
 
     const parent = atRule.parent
-    if (!parent || parent.type !== 'rule') {
+    if (!parent || !isRule(parent)) {
       const start = atRule.source?.start
-      throw new ApplyTransformError(
-        '@apply can only be used inside a CSS rule',
-        { line: start?.line, column: start?.column },
-      )
+      throw new ApplyTransformError('@apply can only be used inside a CSS rule', {
+        line: start?.line,
+        column: start?.column,
+      })
     }
 
     const expansion = expansionFor(atRule.params)
     if (!expansion) {
       const start = atRule.source?.start
-      throw new ApplyTransformError(
-        `No Tailwind expansion was produced for \`@apply ${atRule.params};\``,
-        { line: start?.line, column: start?.column },
-      )
+      throw new ApplyTransformError(`No Tailwind expansion was produced for \`@apply ${atRule.params};\``, {
+        line: start?.line,
+        column: start?.column,
+      })
     }
 
     const ruleChain = collectRuleChain(atRule)
     const outerRule = ruleChain[0]
     const baseSelector = ruleChain
       .slice(1)
-      .reduce((selector, rule) => composeSelectors(selector, rule.selector), ruleChain[0].selector)
+      .reduce((selector, rule) => composeSelectors(selector, rule.selector), outerRule.selector)
     const atContext = collectInterveningAtRules(atRule, outerRule)
 
-    const declarations = expansion.nodes.filter((node) => node.type === 'decl')
-    const nested = expansion.nodes.filter((node) => node.type === 'rule' || node.type === 'atrule')
+    const expansionNodes = childNodes(expansion)
+    const declarations = expansionNodes.filter((node): node is Declaration => node.type === 'decl')
+    const nested = expansionNodes.filter(
+      (node): node is Rule | AtRule => node.type === 'rule' || node.type === 'atrule',
+    )
 
     const indent = indentOf(atRule)
-    const before = atRule.raws.before && atRule.raws.before.includes('\n')
-      ? atRule.raws.before
-      : `\n${indent}`
+    const rawBefore: unknown = atRule.raws.before
+    const before =
+      typeof rawBefore === 'string' && rawBefore.includes('\n') ? rawBefore : `\n${indent}`
 
     for (const declaration of declarations) {
       const clone = cloneDeclaration(declaration, propertyDefaults)
@@ -104,18 +134,19 @@ export function transformStyleCss(
     atRule.remove()
     applyCount++
 
-    if (parent.nodes.length === 0) emptiedRules.add(parent)
+    if ((parent.nodes?.length ?? 0) === 0) emptiedRules.add(parent)
 
     if (nested.length === 0) return
 
     const generated = flattenExpansion(nested, baseSelector, atContext)
     const insertAfter = insertionAnchors.get(outerRule) ?? outerRule
+    const outerParent = outerRule.parent
 
-    if (generated.length > 0) {
+    if (generated.length > 0 && outerParent) {
       const nodes = generated.map((entry, index) =>
         buildGeneratedNode(entry, indentOf(outerRule), index === 0, propertyDefaults),
       )
-      outerRule.parent.insertAfter(insertAfter, nodes)
+      outerParent.insertAfter(insertAfter, nodes)
       insertionAnchors.set(outerRule, nodes[nodes.length - 1])
       generatedCount += nodes.length
     }
@@ -128,11 +159,11 @@ export function transformStyleCss(
   // A rule whose entire body was an `@apply` with only variants would be left
   // empty; its generated rules already live next to it, so drop the shell.
   for (const rule of emptiedRules) {
-    if (!rule.parent || rule.nodes.length > 0) continue
+    if (!rule.parent || (rule.nodes?.length ?? 0) > 0) continue
 
     const next = rule.next()
     if (!rule.prev() && next) {
-      next.raws.before = (next.raws.before ?? '').replace(/^\n\n/, '\n')
+      next.raws.before = String(next.raws.before ?? '').replace(/^\n\n/, '\n')
     }
     rule.remove()
   }
@@ -147,24 +178,24 @@ export function transformStyleCss(
   }
 }
 
-function collectRuleChain(node) {
-  const chain = []
-  let current = node.parent
+function collectRuleChain(node: Node): Rule[] {
+  const chain: Rule[] = []
+  let current: Container | Document | undefined = node.parent
 
-  while (current && current.type !== 'root') {
-    if (current.type === 'rule') chain.unshift(current)
+  while (current && !isRoot(current)) {
+    if (isRule(current)) chain.unshift(current)
     current = current.parent
   }
 
   return chain
 }
 
-function collectInterveningAtRules(applyAtRule, outerRule) {
-  const atRules = []
-  let current = applyAtRule.parent
+function collectInterveningAtRules(applyAtRule: AtRule, outerRule: Rule): AtRuleInfo[] {
+  const atRules: AtRuleInfo[] = []
+  let current: Container | Document | undefined = applyAtRule.parent
 
   while (current && current !== outerRule) {
-    if (current.type === 'atrule') {
+    if (isAtRule(current)) {
       atRules.unshift({ name: current.name, params: current.params })
     }
     current = current.parent
@@ -173,41 +204,40 @@ function collectInterveningAtRules(applyAtRule, outerRule) {
   return atRules
 }
 
-function indentOf(node) {
-  const before = node.raws?.before ?? ''
-  const match = /\n([ \t]*)$/.exec(before)
+function indentOf(node: Node): string {
+  const before: unknown = node.raws?.before
+  const match = /\n([ \t]*)$/.exec(typeof before === 'string' ? before : '')
   return match ? match[1] : ''
 }
 
 /**
  * Flatten the nested AST Tailwind emits for `@apply` into logical rules.
- *
- * @returns {Array<{ atContext: Array<{name: string, params: string}>, selector: string, declarations: import('postcss').Declaration[] }>}
  */
-function flattenExpansion(nodes, baseSelector, atContext) {
-  const output = []
+function flattenExpansion(
+  nodes: ChildNode[],
+  baseSelector: string,
+  atContext: AtRuleInfo[],
+): FlattenedRule[] {
+  const output: FlattenedRule[] = []
 
-  const declarations = []
-  const children = []
-
-  for (const node of nodes) {
-    if (node.type === 'decl') declarations.push(node)
-    else if (node.type === 'rule' || node.type === 'atrule') children.push(node)
-  }
+  const declarations = nodes.filter((node): node is Declaration => node.type === 'decl')
+  const children = nodes.filter(
+    (node): node is Rule | AtRule => node.type === 'rule' || node.type === 'atrule',
+  )
 
   if (declarations.length > 0) {
     output.push({ atContext, selector: baseSelector, declarations })
   }
 
   for (const child of children) {
-    if (child.type === 'rule') {
+    if (isRule(child)) {
       const selector = composeSelectors(baseSelector, child.selector)
-      output.push(...flattenExpansion(child.nodes, selector, atContext))
+      output.push(...flattenExpansion(childNodes(child), selector, atContext))
       continue
     }
 
     output.push(
-      ...flattenExpansion(child.nodes, baseSelector, [
+      ...flattenExpansion(childNodes(child), baseSelector, [
         ...atContext,
         { name: child.name, params: child.params },
       ]),
@@ -217,7 +247,12 @@ function flattenExpansion(nodes, baseSelector, atContext) {
   return output
 }
 
-function buildGeneratedNode(entry, topIndent, isFirst, propertyDefaults) {
+function buildGeneratedNode(
+  entry: FlattenedRule,
+  topIndent: string,
+  isFirst: boolean,
+  propertyDefaults: Map<string, string> | undefined,
+): ChildNode {
   const depth = entry.atContext.length
   const ruleIndent = topIndent + '  '.repeat(depth)
 
@@ -234,7 +269,7 @@ function buildGeneratedNode(entry, topIndent, isFirst, propertyDefaults) {
     rule.append(clone)
   }
 
-  let node = rule
+  let node: Rule | AtRule = rule
 
   for (let index = depth - 1; index >= 0; index--) {
     const { name, params } = entry.atContext[index]
@@ -251,11 +286,14 @@ function buildGeneratedNode(entry, topIndent, isFirst, propertyDefaults) {
   return node
 }
 
-function cloneDeclaration(declaration, propertyDefaults) {
+function cloneDeclaration(
+  declaration: Declaration,
+  propertyDefaults: Map<string, string> | undefined,
+): Declaration {
   const clone = declaration.clone()
 
   if (propertyDefaults && propertyDefaults.size > 0 && clone.value) {
-    clone.value = clone.value.replace(/var\(\s*(--[\w-]+)\s*\)/g, (match, name) => {
+    clone.value = clone.value.replace(/var\(\s*(--[\w-]+)\s*\)/g, (match, name: string) => {
       const initialValue = propertyDefaults.get(name)
       return initialValue === undefined ? match : `var(${name}, ${initialValue})`
     })
@@ -264,7 +302,7 @@ function cloneDeclaration(declaration, propertyDefaults) {
   return clone
 }
 
-function usesTailwind(root) {
+function usesTailwind(root: Root): boolean {
   let used = false
 
   root.walkAtRules((atRule) => {
@@ -279,9 +317,11 @@ function usesTailwind(root) {
   return /(?:^|[^\w-])theme\s*\(|--(?:alpha|spacing|theme)\s*\(/.test(root.toString())
 }
 
-function removeReferenceRules(root) {
-  const references = []
-  root.walkAtRules('reference', (atRule) => references.push(atRule))
+function removeReferenceRules(root: Root): boolean {
+  const references: AtRule[] = []
+  root.walkAtRules('reference', (atRule) => {
+    references.push(atRule)
+  })
   if (references.length === 0) return false
 
   for (const reference of references) {
