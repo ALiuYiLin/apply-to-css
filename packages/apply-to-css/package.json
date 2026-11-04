@@ -1,6 +1,6 @@
 {
   "name": "@10coding/apply-to-css",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Expand Tailwind CSS @apply rules in Vue SFC <style> blocks into plain CSS declarations.",
   "type": "module",
   "license": "MIT",
