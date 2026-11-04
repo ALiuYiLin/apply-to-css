@@ -209,3 +209,28 @@ pnpm test
 ```
 
 测试使用 Node 内置 `node:test`，覆盖普通展开、变体、空壳规则、`@layer`、逗号选择器、`:deep()`、CRLF、错误定位、CLI 退出码等场景。
+
+## 发布
+
+版本与 changelog 由 [Changesets](https://github.com/changesets/changesets) 管理，配置在
+[`.changeset/config.json`](.changeset/config.json)。仓库开发环境需要 Node 22.11+（Changesets 3 的要求）；
+工具包本身仍支持 Node 20+。
+
+```bash
+# 为本次改动创建 changeset
+pnpm changeset
+
+# 查看待发布的变更
+pnpm changeset:status
+
+# 汇总 changeset：更新版本号与 CHANGELOG
+pnpm version-packages
+
+# 发布到 npm（会创建 Git tag）
+pnpm release
+```
+
+`@10coding/apply-to-css` 的 `0.1.0` 尚未发布到 npm，首次发布可以直接执行 `pnpm test && pnpm release`；
+之后的每次发布都应先添加 changeset。发布前需要登录 npmjs（`npm login --registry=https://registry.npmjs.org`）
+或配置 `NPM_TOKEN`。包已通过 `publishConfig` 设为公开并固定发布到 npmjs。更完整的说明见
+[`.changeset/README.md`](.changeset/README.md)。

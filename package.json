@@ -4,6 +4,10 @@
   "private": true,
   "description": "pnpm workspace for @10coding/apply-to-css",
   "type": "module",
+  "packageManager": "pnpm@11.28.5",
+  "engines": {
+    "node": ">=22.11.0"
+  },
   "scripts": {
     "apply-to-css": "node packages/apply-to-css/bin/apply-to-css.js",
     "test": "pnpm --filter @10coding/apply-to-css test",
@@ -12,6 +16,13 @@
     "playground:build": "pnpm --filter @10coding/apply-to-css-playground build",
     "playground:check": "pnpm --filter @10coding/apply-to-css-playground demo:check",
     "playground:diff": "pnpm --filter @10coding/apply-to-css-playground demo:diff",
-    "playground:convert": "pnpm --filter @10coding/apply-to-css-playground demo:convert"
+    "playground:convert": "pnpm --filter @10coding/apply-to-css-playground demo:convert",
+    "changeset": "changeset",
+    "changeset:status": "changeset status",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3"
   }
 }
